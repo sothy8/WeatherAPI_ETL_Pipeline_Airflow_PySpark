@@ -58,7 +58,8 @@ Weather_API_ETL_Pipelines/
 ├── Dockerfile                    # Custom Airflow image with Java 17 + PySpark
 ├── docker-compose.yml            # MySQL + Airflow (webserver + scheduler)
 ├── requirements.txt
-└── .env                          # Local environment variables (not committed)
+├── .env.example                  # Template — copy to .env and fill in secrets
+└── .env                          # Your local secrets (not committed to git)
 ```
 
 ---
@@ -78,7 +79,7 @@ Weather_API_ETL_Pipelines/
 
 - Reads the JSON-lines file with PySpark
 - Cleans string columns (lowercase, strips special characters)
-- Casts numeric and datetime columns to proper types
+- Casts numeric columns to `double`
 - Orders rows by `local_time`
 - Writes two outputs to `data/processed/`:
   - `weather_cleaned_csv/` — Spark partitioned directory
@@ -88,7 +89,7 @@ Weather_API_ETL_Pipelines/
 
 - Reads `weather_cleaned.csv`
 - **Truncates** `weather_current` then reloads the full window on every run — no duplicates, always consistent
-- Normalises datetime strings: Spark writes ISO 8601 with timezone offset (e.g. `2026-05-11T00:00:00.000+07:00`); the loader strips the offset while preserving the **wall-clock time** so MySQL `DATETIME` receives the correct local value
+- Parses datetime strings and strips timezone offsets while preserving the **wall-clock time** so MySQL `DATETIME` stores the correct local value
 - Inserts in chunks of 500 rows via SQLAlchemy
 
 ### 4. Data Quality Check (`dags/weather_etl_dag.py`)
@@ -134,7 +135,7 @@ CREATE TABLE weather_current (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 ```
 
-> If you created the table before the `last_updated` column was removed, run this migration in MySQL Workbench:
+> If you created the table before the `last_updated` column was removed, run this migration:
 > ```sql
 > ALTER TABLE weather_current DROP COLUMN last_updated;
 > ```
@@ -150,14 +151,19 @@ CREATE TABLE weather_current (
 
 ### 1. Configure environment
 
-Edit `.env` and set your API key and target location:
+```bash
+cp .env.example .env
+```
+
+Then edit `.env` and fill in your values:
 
 ```env
 WEATHER_API_KEY=your_api_key_here
-WEATHER_QUERY=Cambodia          # city, country, or lat,lon
+WEATHER_QUERY=Cambodia
+DATABASE_URL=mysql+pymysql://weather:weather@mysql:3306/weather_etl
 ```
 
-> **Apple Silicon vs Intel/AMD:** The `Dockerfile` and `docker-compose.yml` default to `java-17-openjdk-arm64` (Apple Silicon). If you are on an Intel/AMD machine, change both occurrences to `java-17-openjdk-amd64`.
+> **Apple Silicon vs Intel/AMD:** The `Dockerfile` and `docker-compose.yml` default to `java-17-openjdk-arm64` (Apple Silicon M1/M2/M3). If you are on an Intel/AMD machine, change both occurrences to `java-17-openjdk-amd64`.
 
 ### 2. Build and start
 
@@ -176,7 +182,28 @@ Username: admin
 Password: admin
 ```
 
-### 4. Trigger a run
+### 4. Add the MySQL connection (optional)
+
+The pipeline works out of the box via the `DATABASE_URL` env var. To manage the connection through the Airflow UI instead:
+
+1. Go to **Admin → Connections → +**
+2. Fill in:
+
+| Field | Value |
+|---|---|
+| Connection Id | `weather_mysql` |
+| Connection Type | `MySQL` |
+| Host | `mysql` |
+| Schema | `weather_etl` |
+| Login | `weather` |
+| Password | `weather` |
+| Port | `3306` |
+
+3. Click **Save**
+
+When the `weather_mysql` connection exists, the DAG uses it automatically. If it doesn't exist, it falls back to `DATABASE_URL`.
+
+### 5. Trigger a run
 
 In the Airflow UI, find `weather_api_etl_pipeline` and click the ▶ play button. Or from the terminal:
 
@@ -187,7 +214,7 @@ docker compose exec airflow-scheduler \
 
 The four tasks run in sequence: `extract_weather → transform_weather → load_weather → data_quality_check`.
 
-### 5. Connect to the Docker MySQL (optional)
+### 6. Connect to the Docker MySQL (optional)
 
 The Docker MySQL is exposed on host port **3307** to avoid conflicts with a local MySQL instance:
 
@@ -224,17 +251,18 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+Copy and configure the environment file:
+
+```bash
+cp .env.example .env
+# edit .env — set WEATHER_API_KEY and DATABASE_URL
+```
+
 Create the database and table:
 
 ```bash
 mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS weather_etl CHARACTER SET utf8mb4;"
 mysql -u root -p weather_etl < sql/create_weather_table.sql
-```
-
-Update `DATABASE_URL` in `.env` to point to your local MySQL, e.g.:
-
-```env
-DATABASE_URL=mysql+pymysql://root:yourpassword@127.0.0.1:3306/weather_etl
 ```
 
 ### Run each step manually
@@ -249,13 +277,13 @@ python jobs/load_weather.py
 
 ## Configuration Reference
 
-All settings are controlled via environment variables (`.env` for local runs, `docker-compose.yml` for Docker).
+All settings are controlled via environment variables. See `.env.example` for a full template.
 
 | Variable | Default | Description |
 |---|---|---|
 | `WEATHER_API_KEY` | *(required)* | WeatherAPI.com API key |
 | `WEATHER_API_BASE_URL` | `https://api.weatherapi.com/v1` | API base URL |
-| `WEATHER_QUERY` | `Cambodia` | Location to fetch (city, country, or lat,lon) |
+| `WEATHER_QUERY` | `Cambodia` | Location to fetch (city, country, or `lat,lon`) |
 | `WEATHER_AQI` | `no` | Include air quality index (`yes`/`no`) |
 | `WEATHER_LANGUAGE` | `en` | Response language |
 | `WEATHER_TIMEOUT_SECONDS` | `30` | HTTP request timeout in seconds |
@@ -277,4 +305,3 @@ All settings are controlled via environment variables (`.env` for local runs, `d
 | ORM / DB client | SQLAlchemy 1.4 + PyMySQL 1.1 |
 | Containerisation | Docker + Docker Compose |
 | Language | Python 3.11 |
-# WeatherAPI_ETL_Pipeline_Airflow_PySpark

@@ -20,9 +20,10 @@ env/
 # Keep the folder structure but ignore generated data
 data/raw/*.json
 data/raw/*.csv
-data/processed/
-!data/raw/.gitkeep
-!data/processed/.gitkeep
+data/processed/*.json
+data/processed/*.csv
+data/processed/weather_cleaned_csv
+
 
 # ── Airflow ───────────────────────────────────────────────────────────────────
 logs/
