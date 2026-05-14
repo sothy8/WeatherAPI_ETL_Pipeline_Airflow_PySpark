@@ -1,0 +1,53 @@
+# ── Secrets & environment ─────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+
+# ── Data files ────────────────────────────────────────────────────────────────
+# Keep the folder structure but ignore generated data
+data/raw/*.json
+data/raw/*.csv
+data/processed/
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+
+# ── Airflow ───────────────────────────────────────────────────────────────────
+logs/
+airflow.db
+airflow.cfg
+standalone_admin_password.txt
+dags/__pycache__/
+jobs/__pycache__/
+
+# ── Spark ─────────────────────────────────────────────────────────────────────
+derby.log
+metastore_db/
+spark-warehouse/
+
+# ── Docker ────────────────────────────────────────────────────────────────────
+# Keep docker files, ignore generated volumes/state
+.docker/
+
+# ── macOS ─────────────────────────────────────────────────────────────────────
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# ── IDEs ──────────────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo

@@ -1,0 +1,107 @@
+version: "3.8"
+
+# ── Shared environment variables ──────────────────────────────────────────────
+x-airflow-env: &airflow-env
+  AIRFLOW__CORE__EXECUTOR: LocalExecutor
+  AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: mysql+pymysql://airflow:airflow@mysql:3306/airflow
+  AIRFLOW__CORE__FERNET_KEY: ""
+  AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
+  AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+  AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "true"
+  # Weather ETL settings (mirrors your .env)
+  WEATHER_API_KEY: ${WEATHER_API_KEY}
+  WEATHER_API_BASE_URL: ${WEATHER_API_BASE_URL:-https://api.weatherapi.com/v1}
+  WEATHER_QUERY: ${WEATHER_QUERY:-Cambodia}
+  WEATHER_AQI: ${WEATHER_AQI:-no}
+  WEATHER_LANGUAGE: ${WEATHER_LANGUAGE:-en}
+  WEATHER_TIMEOUT_SECONDS: ${WEATHER_TIMEOUT_SECONDS:-30}
+  RAW_WEATHER_PATH: /opt/airflow/data/raw/weather.json
+  PROCESSED_WEATHER_PATH: /opt/airflow/data/processed/weather_cleaned_csv
+  DATABASE_URL: mysql+pymysql://weather:weather@mysql:3306/weather_etl
+  WEATHER_TABLE_NAME: weather_current
+  JAVA_HOME: /usr/lib/jvm/java-17-openjdk-arm64
+
+x-airflow-volumes: &airflow-volumes
+  - ./dags:/opt/airflow/dags
+  - ./jobs:/opt/airflow/jobs
+  - ./data:/opt/airflow/data
+  - ./logs:/opt/airflow/logs
+  - airflow-plugins:/opt/airflow/plugins
+
+services:
+
+  # ── MySQL (shared by Airflow metadata + weather ETL) ───────────────────────
+  mysql:
+    image: mysql:8.0
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_USER: airflow
+      MYSQL_PASSWORD: airflow
+      MYSQL_DATABASE: airflow
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./docker/mysql/initdb:/docker-entrypoint-initdb.d   # runs on first start
+    ports:
+      - "3307:3306"   # host 3307 → container 3306 (avoids conflict with local MySQL)
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-prootpassword"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # ── Airflow DB init ────────────────────────────────────────────────────────
+  airflow-init:
+    build: .
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      <<: *airflow-env
+      _AIRFLOW_DB_MIGRATE: "true"
+      _AIRFLOW_WWW_USER_CREATE: "true"
+      _AIRFLOW_WWW_USER_USERNAME: admin
+      _AIRFLOW_WWW_USER_PASSWORD: admin
+    volumes: *airflow-volumes
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        airflow db migrate
+        airflow users create \
+          --username admin --password admin \
+          --firstname Admin --lastname User \
+          --role Admin --email admin@example.com || true
+
+  # ── Airflow Webserver ──────────────────────────────────────────────────────
+  airflow-webserver:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    environment: *airflow-env
+    volumes: *airflow-volumes
+    ports:
+      - "8080:8080"
+    command: webserver
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # ── Airflow Scheduler ──────────────────────────────────────────────────────
+  airflow-scheduler:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    environment: *airflow-env
+    volumes: *airflow-volumes
+    command: scheduler
+
+volumes:
+  mysql-data:
+  airflow-plugins:
