@@ -3,9 +3,9 @@
 Output
 ------
 Two files are written:
-  1. Spark CSV directory  (output_path/)             – partitioned Spark output
+  1. Spark CSV directory  (output_path/)             - partitioned Spark output
   2. Single merged CSV    (output_path/../weather_cleaned.csv)
-     – one clean file for easy inspection / downstream use
+    - one clean file for easy inspection / downstream use
 """
 
 from __future__ import annotations
