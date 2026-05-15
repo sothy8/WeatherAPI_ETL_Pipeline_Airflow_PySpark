@@ -4,11 +4,11 @@ Schedule : hourly
 Pipeline : extract → transform → load → data_quality_check
 
 Data quality checks (run after every load):
-  1. Row count    – at least 72 rows expected (3 full days × 24 h)
-  2. Null check   – no NULLs in critical columns
-  3. Temp range   – temp_c must be between -10 °C and 60 °C
-  4. Humidity     – humidity must be 0–100
-  5. Freshness    – most-recent local_time must be within the last 25 h
+  1. Row count    - at least 72 rows expected (3 full days × 24 h)
+  2. Null check   - no NULLs in critical columns
+  3. Temp range   - temp_c must be between -10 °C and 60 °C
+  4. Humidity     - humidity must be 0-100
+  5. Freshness    - most-recent local_time must be within the last 25 h
 """
 
 from __future__ import annotations

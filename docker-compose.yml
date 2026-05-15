@@ -20,6 +20,7 @@ x-airflow-env: &airflow-env
   DATABASE_URL: mysql+pymysql://weather:weather@mysql:3306/weather_etl
   WEATHER_TABLE_NAME: weather_current
   JAVA_HOME: /usr/lib/jvm/java-17-openjdk-arm64
+  SPARK_MASTER_URL: spark://spark-master:7077
 
 x-airflow-volumes: &airflow-volumes
   - ./dags:/opt/airflow/dags
@@ -101,6 +102,37 @@ services:
     environment: *airflow-env
     volumes: *airflow-volumes
     command: scheduler
+
+  # ── Spark Master ───────────────────────────────────────────────────────────
+  spark-master:
+    image: apache/spark:3.5.1-python3
+    restart: unless-stopped
+    entrypoint: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.master.Master"]
+    environment:
+      SPARK_MASTER_HOST: spark-master
+      SPARK_MASTER_PORT: "7077"
+      SPARK_MASTER_WEBUI_PORT: "8080"
+    ports:
+      - "8081:8080"   # Spark Master UI
+      - "7077:7077"   # Spark job submission port
+    volumes:
+      - ./data:/opt/airflow/data
+
+  # ── Spark Worker ───────────────────────────────────────────────────────────
+  spark-worker:
+    image: apache/spark:3.5.1-python3
+    restart: unless-stopped
+    entrypoint: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.worker.Worker", "spark://spark-master:7077"]
+    depends_on:
+      - spark-master
+    environment:
+      SPARK_WORKER_MEMORY: 1g
+      SPARK_WORKER_CORES: "1"
+      SPARK_WORKER_WEBUI_PORT: "8082"
+    ports:
+      - "8082:8082"   # Spark Worker UI
+    volumes:
+      - ./data:/opt/airflow/data
 
 volumes:
   mysql-data:

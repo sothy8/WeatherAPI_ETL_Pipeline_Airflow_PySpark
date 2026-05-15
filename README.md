@@ -16,6 +16,11 @@ WeatherAPI.com
 └─────────────┘   weather.json      └──────────────────┘
                   weather.csv         weather_cleaned.csv
                                               │
+                                    ┌─────────┴────────┐
+                                    │  Spark Cluster   │
+                                    │ (master + worker)│
+                                    └─────────┬────────┘
+                                              │
                                               ▼
                                     ┌──────────────────┐
                                     │      Load        │
@@ -33,7 +38,7 @@ WeatherAPI.com
                                       weather_current
 ```
 
-All four steps run as tasks inside a single Airflow DAG scheduled hourly.
+All four steps run as tasks inside a single Airflow DAG scheduled hourly. The transform step submits work to a standalone Spark cluster (spark-master + spark-worker) when running inside Docker, or falls back to `local[*]` mode when running outside Docker.
 
 ---
 
@@ -46,17 +51,16 @@ Weather_API_ETL_Pipelines/
 ├── jobs/
 │   ├── extract_weather.py        # Step 1 – fetch from WeatherAPI.com
 │   ├── transform_weather.py      # Step 2 – clean & cast with PySpark
-│   └── load_weather.py           # Step 3 – insert into MySQL
+│   ├── load_weather.py           # Step 3 – insert into MySQL
+│   └── run_pipeline.py           # Standalone runner (no Airflow required)
 ├── data/
 │   ├── raw/                      # weather.json + weather.csv (extract output)
 │   └── processed/                # weather_cleaned_csv/ + weather_cleaned.csv
-├── sql/
-│   └── create_weather_table.sql  # Table DDL (reference / local setup)
 ├── docker/
 │   └── mysql/initdb/
 │       └── 01_weather_etl.sql    # Auto-runs on first Docker MySQL start
 ├── Dockerfile                    # Custom Airflow image with Java 17 + PySpark
-├── docker-compose.yml            # MySQL + Airflow (webserver + scheduler)
+├── docker-compose.yml            # MySQL + Airflow + Spark cluster
 ├── requirements.txt
 ├── .env.example                  # Template — copy to .env and fill in secrets
 └── .env                          # Your local secrets (not committed to git)
@@ -182,6 +186,13 @@ Username: admin
 Password: admin
 ```
 
+The Spark cluster UIs are also available:
+
+```
+Spark Master UI:  http://localhost:8081
+Spark Worker UI:  http://localhost:8082
+```
+
 ### 4. Add the MySQL connection (optional)
 
 The pipeline works out of the box via the `DATABASE_URL` env var. To manage the connection through the Airflow UI instead:
@@ -262,8 +273,16 @@ Create the database and table:
 
 ```bash
 mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS weather_etl CHARACTER SET utf8mb4;"
-mysql -u root -p weather_etl < sql/create_weather_table.sql
+mysql -u root -p weather_etl < docker/mysql/initdb/01_weather_etl.sql
 ```
+
+### Run the full pipeline in one command
+
+```bash
+python jobs/run_pipeline.py
+```
+
+This runs all four steps in sequence (extract → transform → load → data quality check) and prints a summary with timing. If `DATABASE_URL` is not set, it exits early with an error.
 
 ### Run each step manually
 
@@ -274,6 +293,21 @@ python jobs/load_weather.py
 ```
 
 ---
+
+## PySpark notes
+
+- PySpark is used for the heavy lifting in the transform step (`jobs/transform_weather.py`). The project depends on `pyspark==3.5.1` (see `requirements.txt`) and requires Java 17 to run when executing `jobs/transform_weather.py` locally.
+- The transform reads `data/raw/weather.json`, cleans and casts fields with a `SparkSession`, writes a partitioned CSV directory (default: `data/processed/weather_cleaned_csv/`) and then merges the `part-*.csv` output into a single `weather_cleaned.csv` one level up for convenience.
+- Example local run (uses the same defaults as the DAG):
+
+```bash
+python jobs/transform_weather.py --input data/raw/weather.json --output data/processed/weather_cleaned_csv
+```
+
+Notes:
+- If running PySpark locally you must have Java 17 installed and accessible on `PATH`.
+- The Docker-based Airflow image already includes Java and installs `pyspark` from `requirements.txt`, so running inside the provided Docker setup requires no additional Java/PySpark setup on the host.
+
 
 ## Configuration Reference
 
@@ -291,6 +325,7 @@ All settings are controlled via environment variables. See `.env.example` for a 
 | `PROCESSED_WEATHER_PATH` | `./data/processed/weather_cleaned_csv` | Output path for the transform step |
 | `DATABASE_URL` | *(required)* | SQLAlchemy connection string |
 | `WEATHER_TABLE_NAME` | `weather_current` | Target MySQL table name |
+| `SPARK_MASTER_URL` | `local[*]` | Spark master URL (`spark://spark-master:7077` inside Docker) |
 
 ---
 
@@ -300,6 +335,7 @@ All settings are controlled via environment variables. See `.env.example` for a 
 |---|---|
 | Orchestration | Apache Airflow 2.9.3 |
 | Data processing | PySpark 3.5.1 |
+| Spark cluster | Apache Spark 3.5.1 (standalone master + worker) |
 | Data extraction | Python `requests` 2.32 |
 | Database | MySQL 8.0 |
 | ORM / DB client | SQLAlchemy 1.4 + PyMySQL 1.1 |

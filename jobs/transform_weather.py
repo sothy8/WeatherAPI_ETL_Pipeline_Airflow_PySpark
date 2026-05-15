@@ -28,19 +28,32 @@ DEFAULT_PROCESSED_PATH = os.getenv("PROCESSED_WEATHER_PATH", "./data/processed/w
 
 
 def transform_weather(input_path: str, output_path: str) -> str:
+    # Use the Spark cluster if SPARK_MASTER_URL is set (Docker),
+    # otherwise fall back to local mode (running outside Docker).
+    spark_master = os.getenv("SPARK_MASTER_URL", "local[*]")
+
     spark = (
         SparkSession.builder.appName("weather-etl-transform")
+        .master(spark_master)
         .config("spark.driver.bindAddress", "0.0.0.0")
         .config("spark.driver.host", "localhost")
         .getOrCreate()
     )
+    print(f"Spark master: {spark_master}")
 
     # Extract writes flat JSON-lines — one object per line
     raw_df = spark.read.json(input_path)
 
+    # Small helper to normalise textual columns: remove non-alphanumerics,
+    # trim whitespace and convert to lowercase so downstream comparisons are
+    # consistent and predictable.
     def _clean_str(c):
         return lower(trim(regexp_replace(col(c), r"[^A-Za-z0-9\s\-]", "")))
 
+    # Select, clean and cast the required columns. Keep `local_time` and
+    # `extracted_at` as strings here (parsing / timezone handling happens
+    # later in the load step). Filter out any rows missing a location name
+    # and order by local time for deterministic output.
     cleaned_df = (
         raw_df.select(
             _clean_str("location_name").alias("location_name"),
@@ -73,11 +86,16 @@ def transform_weather(input_path: str, output_path: str) -> str:
     target_path = Path(output_path)
     target_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Write Spark partitioned CSV directory
+    # Write a partitioned CSV directory. We coalesce to 1 partition so the
+    # output contains a single `part-*.csv` file which we then merge below
+    # into a single named CSV for easy downstream consumption.
     cleaned_df.coalesce(1).write.mode("overwrite").option("header", "true").csv(str(target_path))
+
+    # Stop the Spark session to free resources before performing local IO.
     spark.stop()
 
-    # Merge the single part file into a clean named CSV one level up
+    # Merge the produced `part-*.csv` file(s) into a single, human-friendly
+    # `weather_cleaned.csv` file one level above the Spark output directory.
     merged_csv = target_path.parent / "weather_cleaned.csv"
     part_files = sorted(glob.glob(str(target_path / "part-*.csv")))
     if part_files:
